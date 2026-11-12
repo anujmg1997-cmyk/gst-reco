@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -65,7 +69,7 @@ jobs:
         shell: pwsh
         run: |
           $v = "${{ steps.ver.outputs.version }}"
-          $prev = git describe --tags --abbrev=0 "HEAD^" 2>$null
+          $prev = git tag --list "v*" --sort=-v:refname | Where-Object { $_ -ne "v$v" } | Select-Object -First 1
           if ($prev) { git log "$prev..HEAD" --pretty="- %s" | Out-File notes.txt -Encoding utf8 }
           else { "- First release" | Out-File notes.txt -Encoding utf8 }
           $exe = "dist/installer/GSTReco-Setup-$v.exe"
