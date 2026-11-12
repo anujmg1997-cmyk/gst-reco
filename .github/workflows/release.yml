@@ -1,0 +1,88 @@
+# Builds the Windows installer and publishes it as a GitHub Release.
+#   Release a new version:   git tag v1.0.1  &&  git push origin v1.0.1
+#   (or GitHub > Releases > "Draft a new release" > new tag v1.0.1 > Publish)
+# Every installed copy of the app sees the new version via "Check for updates".
+name: Build & release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:        # manual test build (artifact only, no release)
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Work out version
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart("v") }
+          else { $v = "0.0.${{ github.run_number }}" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Stamp version and update address
+        run: python scripts/stamp_version.py ${{ steps.ver.outputs.version }} https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Self-test
+        run: python tests/selftest.py
+
+      - name: Build app (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name GSTReco
+          --icon assets/app.ico
+          --add-data "gstreco/portal_selectors.json;gstreco"
+          --add-data "assets/app.png;assets"
+          --collect-all playwright
+          app.py
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+            $env:Path += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          iscc /DMyAppVersion=${{ steps.ver.outputs.version }} installer\GSTReco.iss
+
+      - name: Release notes + latest.json
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $prev = git describe --tags --abbrev=0 "HEAD^" 2>$null
+          if ($prev) { git log "$prev..HEAD" --pretty="- %s" | Out-File notes.txt -Encoding utf8 }
+          else { "- First release" | Out-File notes.txt -Encoding utf8 }
+          $exe = "dist/installer/GSTReco-Setup-$v.exe"
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$v/GSTReco-Setup-$v.exe"
+          python scripts/make_manifest.py $exe $v $url dist/installer/latest.json notes.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GSTReco-Setup-${{ steps.ver.outputs.version }}
+          path: dist/installer/*
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: GST Reco ${{ steps.ver.outputs.version }}
+          body_path: notes.txt
+          files: |
+            dist/installer/GSTReco-Setup-${{ steps.ver.outputs.version }}.exe
+            dist/installer/latest.json
