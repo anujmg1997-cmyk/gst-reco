@@ -86,15 +86,16 @@ def short_money(x):
 class Kpi(tk.Frame):
     """Coloured stat tile. Optional click handler (used to filter the table)."""
 
-    def __init__(self, parent, title, accent, soft=None, command=None):
+    def __init__(self, parent, title, accent, soft=None, command=None, compact=False):
         super().__init__(parent, bg=C["card"], highlightthickness=1, highlightbackground=C["border"],
                          cursor="hand2" if command else "")
         self.accent, self.soft, self.active = accent, soft or C["card"], False
         self.bar = tk.Frame(self, bg=accent, width=5)
         self.bar.pack(side="left", fill="y")
-        body = tk.Frame(self, bg=C["card"], padx=12, pady=8)
+        body = tk.Frame(self, bg=C["card"], padx=12, pady=3 if compact else 8)
         body.pack(side="left", fill="both", expand=True)
-        self.value = tk.Label(body, text="–", bg=C["card"], fg=accent, font=(FONT, 17, "bold"), anchor="w")
+        self.value = tk.Label(body, text="–", bg=C["card"], fg=accent, font=(FONT, 13 if compact else 17, "bold"),
+                              anchor="w")
         self.value.pack(fill="x")
         self.title = tk.Label(body, text=title, bg=C["card"], fg=C["text"], font=(FONT, 9, "bold"), anchor="w")
         self.title.pack(fill="x")
@@ -217,6 +218,7 @@ class App(tk.Tk):
         self.configure(bg=C["bg"])
         self.geometry("1360x860")
         self.minsize(1100, 680)
+        self.compact = self.winfo_screenheight() < 900     # e.g. 1366x768 laptops
         self.s = config.load()
         self.ui_q = queue.Queue()
         self.portal = None
@@ -244,6 +246,10 @@ class App(tk.Tk):
         self.show_page("tally")
         self._fill_clients()
         if not selfcheck:
+            try:
+                self.state("zoomed")                          # open maximised on Windows
+            except tk.TclError:
+                pass
             if not self.s["clients"]:
                 self.after(400, lambda: self.manage_clients(first_run=True))
             else:
@@ -327,7 +333,7 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------ header
     def _header(self):
-        h = tk.Frame(self, bg=C["maroon"], height=72)
+        h = tk.Frame(self, bg=C["maroon"], height=64 if self.compact else 72)
         h.pack(fill="x")
         h.pack_propagate(False)
         tk.Frame(self, bg=C["yellow"], height=3).pack(fill="x")
@@ -370,7 +376,7 @@ class App(tk.Tk):
         bar = tk.Frame(self, bg=C["card"])
         bar.pack(fill="x")
         tk.Frame(self, bg=C["border"], height=1).pack(fill="x")
-        inner = tk.Frame(bar, bg=C["card"], padx=16, pady=10)
+        inner = tk.Frame(bar, bg=C["card"], padx=16, pady=5 if self.compact else 10)
         inner.pack(fill="x")
 
         def field(col, label, make):
@@ -441,7 +447,7 @@ class App(tk.Tk):
         self.content.columnconfigure(0, weight=1)
         self.pages = {}
         for key, _, _ in self.PAGES:
-            f = tk.Frame(self.content, bg=C["bg"], padx=20, pady=16)
+            f = tk.Frame(self.content, bg=C["bg"], padx=20, pady=8 if self.compact else 16)
             f.grid(row=0, column=0, sticky="nsew")
             self.pages[key] = f
         self._page_tally(self.pages["tally"])
@@ -459,14 +465,15 @@ class App(tk.Tk):
 
     def _page_head(self, page, title, subtitle):
         head = tk.Frame(page, bg=C["bg"])
-        head.pack(fill="x", pady=(0, 12))
-        tk.Label(head, text=title, bg=C["bg"], fg=C["maroon"], font=(FONT, 17, "bold")).pack(anchor="w")
+        head.pack(fill="x", pady=(0, 6 if self.compact else 12))
+        tk.Label(head, text=title, bg=C["bg"], fg=C["maroon"], font=(FONT, 14 if self.compact else 17, "bold")).pack(
+            anchor="w")
         tk.Label(head, text=subtitle, bg=C["bg"], fg=C["muted"], font=(FONT, 9)).pack(anchor="w")
         return head
 
     def _toolbar(self, page):
-        outer, inner = card(page, padx=12, pady=10)
-        outer.pack(fill="x", pady=(0, 12))
+        outer, inner = card(page, padx=12, pady=6 if self.compact else 10)
+        outer.pack(fill="x", pady=(0, 8 if self.compact else 12))
         return inner
 
     # ------------------------------------------------------------------ status bar, activity, footer
@@ -496,10 +503,10 @@ class App(tk.Tk):
         self.logtxt = tk.Text(self.activity, height=6, state="disabled", wrap="word", font=("Consolas", 9),
                               bg="#FCFAFB", fg=C["text"], relief="flat", padx=12, pady=6, highlightthickness=0)
         self.logtxt.pack(fill="both", expand=True)
-        self.activity.pack(side="bottom", fill="x")
         self._log_border = tk.Frame(self, bg=C["border"], height=1)
         self._log_border.pack(side="bottom", fill="x")
-        self._log_visible = True
+        self._log_visible = False               # hidden by default: the status bar shows the latest message
+        self.btn_log.configure(text="Activity log ▴")
 
     def _toggle_log(self):
         if self._log_visible:
@@ -870,7 +877,7 @@ class App(tk.Tk):
                                          ("purch", "Purchases & debit notes", C["purple"]),
                                          ("warn", "Rows with warnings", "#8A6D00"),
                                          ("out", "Outward taxable value", C["green"])]):
-            w = Kpi(row, t, col)
+            w = Kpi(row, t, col, compact=self.compact)
             w.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 10, 0))
             row.columnconfigure(i, weight=1)
             self.kpi_books[k] = w
@@ -1201,7 +1208,7 @@ class App(tk.Tk):
                  (reco.PORTAL_ONLY, "Only in portal")]
         for i, (stt, title) in enumerate(items):
             bg, fg = STATUS_STYLE[stt]
-            w = Kpi(row, title, fg, bg, command=lambda s=stt: refill(s))
+            w = Kpi(row, title, fg, bg, command=lambda s=stt: refill(s), compact=self.compact)
             w.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
             row.columnconfigure(i, weight=1)
             store[stt] = w
@@ -1336,12 +1343,13 @@ class App(tk.Tk):
         self._reco_kpis(page, self.kpi_s, self._kpi_filter_s)
         mid = tk.Frame(page, bg=C["bg"])
         mid.pack(fill="x", pady=(0, 12))
-        f1, self.tv_r1sum = make_tree(mid, ["Section", "Docs", "Taxable", "Tax"], [210, 60, 130, 120], height=6)
+        f1, self.tv_r1sum = make_tree(mid, ["Section", "Docs", "Taxable", "Tax"], [210, 60, 130, 120],
+                                      height=4 if self.compact else 6)
         f1.pack(side="left", fill="y")
         o, c_ = card(mid, 12, 8)
         o.pack(side="left", fill="both", expand=True, padx=(12, 0))
         tk.Label(c_, text="Notes & warnings", bg=C["card"], fg=C["maroon"], font=(FONT, 10, "bold")).pack(anchor="w")
-        self.txt_r1warn = tk.Text(c_, height=8, wrap="word", font=(FONT, 9), relief="flat", bg=C["card"],
+        self.txt_r1warn = tk.Text(c_, height=4 if self.compact else 8, wrap="word", font=(FONT, 9), relief="flat", bg=C["card"],
                                   highlightthickness=0)
         self.txt_r1warn.pack(fill="both", expand=True)
         f2, self.tv_s = make_tree(page, self.RECO_COLS, self.RECO_W, height=10)
