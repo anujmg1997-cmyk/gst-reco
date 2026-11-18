@@ -37,6 +37,9 @@ def period_choices(n=36):
     return out
 
 
+MAX_SCREEN_ROWS = 3000   # larger lists are shown in part on screen; Excel export always has everything
+
+
 def money(x):
     return "" if x is None else f"{x:,.2f}"
 
@@ -274,7 +277,8 @@ class App(tk.Tk):
         c = tally.TallyClient(self.s["tally_host"], self.s["tally_port"])
         cache = os.path.join(self.out_dir(), "tally_raw")
         self.run_bg(f"Fetching vouchers {fmt_date(d_from)} to {fmt_date(d_to)} from Tally",
-                    lambda: tally.fetch_from_tally(c, company, g, d_from, d_to, cache), self._set_books)
+                    lambda: tally.fetch_from_tally(c, company, g, d_from, d_to, cache, self.log),
+                    self._set_books)
 
     def load_tally_files(self):
         paths = filedialog.askopenfilenames(title="Tally XML (masters + vouchers / Day Book)",
@@ -286,13 +290,16 @@ class App(tk.Tk):
         except ValueError as e:
             return messagebox.showwarning("GST Reco", str(e))
         d_from, d_to = period_bounds(*self.periods())
-        self.run_bg("Reading Tally XML", lambda: tally.load_from_files(paths, g, d_from, d_to), self._set_books)
+        self.run_bg("Reading Tally XML", lambda: tally.load_from_files(paths, g, d_from, d_to, self.log),
+                    self._set_books)
 
     def _set_books(self, res):
         self.books_out, self.books_in = res
         tv = self.tv_books
         tv.delete(*tv.get_children())
-        for d in self.books_out + self.books_in:
+        docs = self.books_out + self.books_in
+        docs = [d for d in docs if d.warnings] + [d for d in docs if not d.warnings]   # problems first
+        for d in docs[:MAX_SCREEN_ROWS]:
             tv.insert("", "end", tags=("warn",) if d.warnings else (), values=[
                 "Sale" if d.direction == "out" else "Purch", d.doc_type, fmt_date(d.inv_date), d.voucher_no,
                 d.inv_no, d.party, d.gstin, d.pos, money(d.taxable), money(d.igst), money(d.cgst),
@@ -300,7 +307,10 @@ class App(tk.Tk):
                 "; ".join(d.warnings)])
         nw = sum(1 for d in self.books_out + self.books_in if d.warnings)
         self.log(f"Books loaded: {len(self.books_out)} sales/credit notes, {len(self.books_in)} purchases/"
-                 f"debit notes. {nw} with warnings (highlighted).")
+                 f"debit notes. {nw} with warnings (highlighted, shown first).")
+        if len(docs) > MAX_SCREEN_ROWS:
+            self.log(f"Showing the first {MAX_SCREEN_ROWS:,} of {len(docs):,} on screen to keep the app fast – "
+                     f"all of them are used for reconciliation and in 'Export books to Excel'.")
         self._update_state()
 
     def export_books(self):
@@ -498,18 +508,25 @@ class App(tk.Tk):
 
     def _fill_reco(self, tv, rows, flt="All"):
         tv.delete(*tv.get_children())
-        tv._rows = []
+        shown = total = 0
         for i, r in enumerate(rows):
             if flt == "Exceptions" and r.status == reco.MATCHED:
                 continue
             if flt not in ("All", "Exceptions") and r.status != flt:
                 continue
+            total += 1
+            if shown >= MAX_SCREEN_ROWS:
+                continue
+            shown += 1
             b, p = r.books, r.portal
             tv.insert("", "end", iid=str(i), tags=(r.status,), values=[
                 r.status, r.party, r.gstin, (b or p).doc_type, b.inv_no if b else "",
                 fmt_date(b.inv_date) if b else "", p.inv_no if p else "", fmt_date(p.inv_date) if p else "",
                 money(b.taxable) if b else "", money(p.taxable) if p else "", money(r.diff("taxable")),
                 money(b.tax) if b else "", money(p.tax) if p else "", money(r.diff("tax")), r.remarks])
+        if total > shown:
+            self.log(f"Showing {shown:,} of {total:,} rows on screen (choose 'Exceptions' in Show to see only "
+                     f"problems). Export to Excel has all rows.")
 
     def _detail(self, tv, rows):
         sel = tv.selection()
