@@ -47,12 +47,19 @@ jobs:
       - name: Self-test
         run: python tests/selftest.py
 
+      - name: UI self-check (opens the app with sample data, takes screenshots)
+        timeout-minutes: 6
+        run: |
+          python -m pip install pillow
+          python app.py --selfcheck dist/ui-preview
+
       - name: Build app (PyInstaller)
         run: >
-          pyinstaller --noconfirm --clean --windowed --name GSTReco
+          pyinstaller --noconfirm --clean --windowed --name GSTReconX
           --icon assets/app.ico
           --add-data "gstreco/portal_selectors.json;gstreco"
-          --add-data "assets/app.png;assets"
+          --add-data "assets;assets"
+          --exclude-module PIL
           --collect-all playwright
           app.py
 
@@ -72,21 +79,24 @@ jobs:
           $prev = git tag --list "v*" --sort=-v:refname | Where-Object { $_ -ne "v$v" } | Select-Object -First 1
           if ($prev) { git log "$prev..HEAD" --pretty="- %s" | Out-File notes.txt -Encoding utf8 }
           else { "- First release" | Out-File notes.txt -Encoding utf8 }
-          $exe = "dist/installer/GSTReco-Setup-$v.exe"
-          $url = "https://github.com/${{ github.repository }}/releases/download/v$v/GSTReco-Setup-$v.exe"
+          $exe = "dist/installer/GSTReconX-Setup-$v.exe"
+          $url = "https://github.com/${{ github.repository }}/releases/download/v$v/GSTReconX-Setup-$v.exe"
           python scripts/make_manifest.py $exe $v $url dist/installer/latest.json notes.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GSTReco-Setup-${{ steps.ver.outputs.version }}
-          path: dist/installer/*
+          name: GSTReconX-Setup-${{ steps.ver.outputs.version }}
+          path: |
+            dist/installer/*
+            dist/ui-preview/*
 
       - name: Publish release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          name: GST Reco ${{ steps.ver.outputs.version }}
+          name: GST ReconX ${{ steps.ver.outputs.version }}
           body_path: notes.txt
           files: |
-            dist/installer/GSTReco-Setup-${{ steps.ver.outputs.version }}.exe
+            dist/installer/GSTReconX-Setup-${{ steps.ver.outputs.version }}.exe
             dist/installer/latest.json
+            dist/ui-preview/*.png
