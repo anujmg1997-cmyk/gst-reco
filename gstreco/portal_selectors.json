@@ -1,0 +1,32 @@
+{
+  "_comment": "GST portal page selectors. The portal changes from time to time - if a step stops working, update the selectors here (Playwright syntax). Every step falls back to 'please click it yourself' and the file is still captured automatically.",
+  "login_url": "https://services.gst.gov.in/services/login",
+  "dashboard_url": "https://return.gst.gov.in/returns/auth/dashboard",
+  "logged_in_url_contains": ["services.gst.gov.in/services/auth", "return.gst.gov.in/returns/auth"],
+  "fy_select": ["select[name='fin']", "select#fin", "select[ng-model*='fin']"],
+  "quarter_select": ["select[name='quarter']", "select#quarter", "select[ng-model*='quarter']"],
+  "period_select": ["select[name='mon']", "select#mon", "select[ng-model*='mon']"],
+  "search_button": ["button:has-text('Search')", "button:has-text('SEARCH')"],
+  "gstr2b_download": [
+    "div.col-sm-4:has-text('GSTR2B') >> button:has-text('Download')",
+    "div:has(> div > p:has-text('GSTR2B')) >> button:has-text('Download')",
+    "xpath=//*[contains(normalize-space(),'GSTR2B')]/ancestor::div[contains(@class,'col')][1]//button[contains(.,'DOWNLOAD') or contains(.,'Download')]"
+  ],
+  "gstr2b_generate_json": [
+    "button:has-text('GENERATE JSON FILE TO DOWNLOAD')",
+    "button:has-text('Generate JSON File to Download')",
+    "button:has-text('Generate JSON')"
+  ],
+  "gstr1_prepare_offline": [
+    "div.col-sm-4:has-text('GSTR1') >> button:has-text('Prepare Offline')",
+    "xpath=//*[contains(normalize-space(),'GSTR1')]/ancestor::div[contains(@class,'col')][1]//button[contains(.,'PREPARE OFFLINE') or contains(.,'Prepare Offline')]"
+  ],
+  "offline_upload_tab": ["a:has-text('Upload')", "li:has-text('Upload') >> a"],
+  "offline_download_tab": ["a:has-text('Download')", "li:has-text('Download') >> a"],
+  "file_input": ["input[type='file']"],
+  "gstr1_generate_json": [
+    "button:has-text('GENERATE JSON FILE TO DOWNLOAD')",
+    "button:has-text('Generate JSON File to Download')",
+    "button:has-text('Generate File')"
+  ]
+}
