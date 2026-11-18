@@ -10,7 +10,7 @@ FILLS = {
     MATCHED: "E2F0D9", PROBABLE: "FFF2CC", MISMATCH: "FCE4D6", GSTIN_MISMATCH: "FCE4D6",
     BOOKS_ONLY: "F8CBAD", PORTAL_ONLY: "DDEBF7",
 }
-HDR_FILL = PatternFill("solid", fgColor="1F3864")
+HDR_FILL = PatternFill("solid", fgColor="900849")
 HDR_FONT = Font(bold=True, color="FFFFFF")
 NUM = "#,##0.00"
 
@@ -49,7 +49,9 @@ def write_reco(path, rows, title, b2cs_rows=None, portal_label="Portal"):
     ws = wb.active
     ws.title = "Summary"
     ws["A1"] = title
-    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].font = Font(bold=True, size=14, color="900849")
+    ws["A2"] = "GST ReconX – developed and owned by Total Strategic Solutions Pvt. Ltd."
+    ws["A2"].font = Font(italic=True, size=9, color="7D6872")
     hdr = ["Status", "Count", "Books taxable", "Books tax", f"{portal_label} taxable", f"{portal_label} tax"]
     _header(ws, 3, hdr)
     for i, srow in enumerate(summarize(rows), start=4):
@@ -99,7 +101,9 @@ def write_3b(path, rows, title):
     ws = wb.active
     ws.title = "GSTR-3B working"
     ws["A1"] = title
-    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].font = Font(bold=True, size=14, color="900849")
+    ws["A2"] = "GST ReconX – developed and owned by Total Strategic Solutions Pvt. Ltd."
+    ws["A2"].font = Font(italic=True, size=9, color="7D6872")
     _header(ws, 3, ["Table", "Description", "Taxable value", "IGST", "CGST", "SGST/UTGST", "Cess"])
     for i, (sec, label, v) in enumerate(rows, start=4):
         vals = [sec, label, v["taxable"], v["igst"], v["cgst"], v["sgst"], v["cess"]]

@@ -1,4 +1,6 @@
-# GST Reco – Tally ↔ GST portal (Windows desktop app)
+# GST ReconX – Tally ↔ GST portal (Windows desktop app)
+
+*Developed and owned by Total Strategic Solutions Pvt. Ltd. All rights reserved.*
 
 Pulls sales and purchase vouchers live from TallyPrime, downloads GSTR-2B / filed GSTR-1 from the GST
 portal through an assisted browser, reconciles them, builds the GSTR-1 upload JSON, and prepares a
@@ -6,27 +8,43 @@ GSTR-3B working — with Excel reports for everything.
 
 ## Install
 
-1. Download **GSTReco-Setup-x.y.z.exe** from the Releases page and run it.
+1. Download **GSTReconX-Setup-x.y.z.exe** from the Releases page and run it.
    No admin rights are needed. It installs to your user profile and adds Start-menu and desktop shortcuts.
 2. In **TallyPrime**: `F1 (Help) > Settings > Connectivity > Client/Server configuration` →
    *TallyPrime acts as* **Both**, *Enable ODBC* **Yes**, *Port* **9000**. Keep the company open.
 
 The portal steps use your installed **Microsoft Edge** (or Chrome), so no extra browser is needed.
 
+## Clients
+
+Use **Manage clients** (top right) to add each company: name, GSTIN and the company name as it appears in
+Tally (*List companies open in Tally* fills it for you). Pick the client from the drop-down in the header.
+Each client has its own folder `Documents\GST ReconX\<Client> (<GSTIN>)\` with one sub-folder per period
+and a `Portal files` folder; GSTR-2B / GSTR-1 files saved there are loaded automatically next time.
+Each client also gets its own browser profile, so GST-portal logins never mix. Portal files whose GSTIN
+does not match the client are ignored.
+
+## Dates and Refresh
+
+Changing **From/To** reuses months already loaded and fetches only new months from Tally, with a progress
+bar. **⟳ Refresh** (or F5) re-reads everything for the selected months from Tally and the client's folder.
+Reconciliations you already ran are recalculated automatically after data changes.
+
 ## Updates
 
 Click **⟳ Check for updates** (top-right, or *Help → Check for updates*). The app also checks quietly on
 start-up. If a newer version exists, it shows what changed, downloads the installer, verifies its
-checksum, installs it silently and reopens. Settings (`%APPDATA%\GSTReco`) and reports
-(`Documents\GSTReco`) are kept.
+checksum, installs it silently and reopens. Settings and clients (`%APPDATA%\GSTReco`) and reports
+are kept.
 
 ### Publishing a new version (for whoever maintains the code)
 
 1. Make the code change and push it to GitHub.
 2. Create a tag with a higher version, either `git tag v1.0.1 && git push origin v1.0.1` or, on GitHub,
    *Releases → Draft a new release → tag `v1.0.1` → Publish*.
-3. GitHub Actions (`.github/workflows/release.yml`) runs the self-test, builds the exe and installer on
-   Windows, and publishes `GSTReco-Setup-1.0.1.exe` plus `latest.json`. Every installed copy then sees
+3. GitHub Actions (`.github/workflows/release.yml`) runs the self-test, opens the app with sample data
+   (screenshots `ui-preview-*.png` are attached to the release), builds the exe and installer on
+   Windows, and publishes `GSTReconX-Setup-1.0.1.exe` plus `latest.json`. Every installed copy then sees
    the update. The release notes are the commit messages since the previous tag.
 
 The update check reads `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`, so the
@@ -103,3 +121,14 @@ gstreco/portal.py           assisted browser (Playwright)
 gstreco/portal_selectors.json
 tests/selftest.py           end-to-end test on sample data:  python tests\selftest.py
 ```
+
+## Release checklist (GitHub web upload)
+
+* Repository: https://github.com/anujmg1997-cmyk/gst-reco (must stay **public** for updates).
+* To change a file inside a folder, **open that folder on GitHub first**, then *Add file → Upload files*.
+  Uploads always land in the folder you are viewing.
+* Files whose names start with a dot (`.github/...`) cannot be dragged in; create them with
+  *Add file → Create new file* and type the full path.
+* Publish with a new, higher tag in the form `v1.0.2` (no dot after the `v`). The build takes about 2 minutes.
+* Released so far: v1.0.0 (first release), v1.0.1 (speed fix for large data), v1.1.0 (GST ReconX: new
+  design, multiple clients, progress bars, cached months + Refresh).

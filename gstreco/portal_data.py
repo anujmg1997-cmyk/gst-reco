@@ -127,3 +127,45 @@ def aggregate_b2cs(rows):
         for f in ("txval", "iamt", "camt", "samt", "csamt"):
             agg[k][f] += r[f]
     return {k: {f: r2(v) for f, v in d.items()} for k, d in agg.items()}
+
+
+# ---------------------------------------------------------------- per-period loading (used by the app)
+def _is_2b(d):
+    return "docdata" in d or "rtnprd" in d
+
+
+def _is_r1(d):
+    return any(k in d for k in ("b2b", "b2cl", "b2cs", "cdnr", "cdnur", "hsn")) and "fp" in d
+
+
+def read_portal_file(path):
+    """Classify and parse a portal file (JSON or ZIP). Returns a list of entries, one per JSON inside:
+    {"kind": "2B" | "GSTR1", "gstin", "period" (MMYYYY or ''), "docs", "b2cs"}. Unknown JSONs are skipped."""
+    import os
+    import tempfile
+    out = []
+    for js in _load_jsons(path):
+        d = js.get("data", js)
+        if not isinstance(d, dict):
+            continue
+        if _is_2b(d):
+            tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+            json.dump(js, tmp)
+            tmp.close()
+            try:
+                docs, meta = load_gstr2b(tmp.name)
+            finally:
+                os.remove(tmp.name)
+            out.append({"kind": "2B", "gstin": clean_gstin(meta.get("gstin")),
+                        "period": (meta["periods"] or [""])[0], "docs": docs, "b2cs": []})
+        elif _is_r1(d):
+            tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+            json.dump(js, tmp)
+            tmp.close()
+            try:
+                docs, b2cs, meta = load_gstr1(tmp.name)
+            finally:
+                os.remove(tmp.name)
+            out.append({"kind": "GSTR1", "gstin": clean_gstin(meta.get("gstin")),
+                        "period": str(meta.get("fp") or ""), "docs": docs, "b2cs": b2cs})
+    return out

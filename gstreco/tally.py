@@ -435,10 +435,9 @@ def _month_chunks(d_from, d_to):
     return out
 
 
-def fetch_from_tally(client: TallyClient, company, company_gstin, d_from, d_to, cache_dir=None, progress=None):
-    """Fetches masters once, then vouchers one month at a time (keeps Tally responsive on big companies)."""
-    say = progress or (lambda m: None)
-    say("Reading masters (ledgers, groups, voucher types, stock items)…")
+def fetch_masters(client: TallyClient, company, cache_dir=None, progress=None):
+    say = progress or (lambda m, f=None: None)
+    say("Reading masters from Tally (ledgers, groups, voucher types, stock items)…")
     master_raws = client.fetch_masters_raw(company)
     masters = TallyMasters()
     for raw in master_raws:
@@ -449,27 +448,57 @@ def fetch_from_tally(client: TallyClient, company, company_gstin, d_from, d_to, 
         for i, raw in enumerate(master_raws):
             with open(os.path.join(cache_dir, f"masters_{i}.xml"), "wb") as f:
                 f.write(raw)
-    out_docs, in_docs = [], []
-    for a, b in _month_chunks(d_from, d_to):
-        say(f"Reading vouchers {a:%b-%Y}…")
+    return masters
+
+
+def fetch_months(client: TallyClient, company, company_gstin, months, masters=None, cache_dir=None,
+                 progress=None):
+    """Fetch the given months [(y, m), ...] one at a time. Returns (masters, {(y, m): (out_docs, in_docs)}).
+    progress(message, fraction_done_or_None)."""
+    say = progress or (lambda m, f=None: None)
+    steps = len(months) + (0 if masters else 1)
+    done = 0
+    if masters is None:
+        say("Connecting to Tally…", 0.02)
+        masters = fetch_masters(client, company, cache_dir, progress)
+        done += 1
+    result = {}
+    for (y, m) in months:
+        a = date(y, m, 1)
+        b = date(y + (m == 12), 1 if m == 12 else m + 1, 1) - timedelta(days=1)
+        say(f"Reading vouchers {a:%b-%Y} from Tally…", done / steps)
         raw = client.fetch_vouchers_raw(company, a, b)
         if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
             with open(os.path.join(cache_dir, f"vouchers_{a:%Y%m}.xml"), "wb") as f:
                 f.write(raw)
+        say(f"Processing {a:%b-%Y}…", (done + 0.5) / steps)
         o, i = vouchers_to_docs([parse_xml(raw)], masters, company_gstin, a, b, progress)
         say(f"  {a:%b-%Y}: {len(o):,} sales docs, {len(i):,} purchase docs")
-        out_docs += o
-        in_docs += i
+        result[(y, m)] = (o, i)
+        done += 1
+    say("Tally data loaded.", 1.0)
+    return masters, result
+
+
+def fetch_from_tally(client: TallyClient, company, company_gstin, d_from, d_to, cache_dir=None, progress=None):
+    """Convenience wrapper: whole period, returns (out_docs, in_docs)."""
+    months = [(a.year, a.month) for a, _ in _month_chunks(d_from, d_to)]
+    _, res = fetch_months(client, company, company_gstin, months, None, cache_dir, progress)
+    out_docs, in_docs = [], []
+    for ym in months:
+        out_docs += res[ym][0]
+        in_docs += res[ym][1]
     return out_docs, in_docs
 
 
 def load_from_files(paths, company_gstin, d_from=None, d_to=None, progress=None):
     """Load Tally XML exports (Day Book / masters, or files cached by fetch_from_tally)."""
-    say = progress or (lambda m: None)
+    say = progress or (lambda m, f=None: None)
     roots = []
     with_vouchers = []
-    for p in paths:
-        say(f"Reading {os.path.basename(p)} ({os.path.getsize(p) / 1e6:,.1f} MB)…")
+    for n, p in enumerate(paths):
+        say(f"Reading {os.path.basename(p)} ({os.path.getsize(p) / 1e6:,.1f} MB)…", n / (len(paths) + 1))
         with open(p, "rb") as f:
             root = parse_xml(f.read())
         roots.append(root)
@@ -478,5 +507,5 @@ def load_from_files(paths, company_gstin, d_from=None, d_to=None, progress=None)
     masters = TallyMasters()
     for root in roots:
         masters.load(root)
-    say("Converting vouchers…")
+    say("Converting vouchers…", len(paths) / (len(paths) + 1))
     return vouchers_to_docs(with_vouchers, masters, company_gstin, d_from, d_to, progress)
