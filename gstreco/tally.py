@@ -22,8 +22,20 @@ class TallyError(Exception):
     pass
 
 
-_BAD_REF = re.compile(r"&#(?:[0-8]|1[0-9]|2[0-9]|3[01]);")
+_BAD_REF = re.compile(r"&#(?:0*(?:[0-8]|1[0-9]|2[0-9]|3[01])|x0*[0-1]?[0-9a-fA-F]);")
 _BAD_CHR = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_TAG = re.compile(r"<[^<>!?][^<>]*>")
+_PREFIXED_NAME = re.compile(r"^(</?)([A-Za-z_][\w.\-]*):(?=[A-Za-z_])")
+_PREFIXED_ATTR = re.compile(r"(\s)([A-Za-z_][\w.\-]*):([A-Za-z_][\w.\-]*)(\s*=)")
+
+
+def _strip_prefixes(tag: str) -> str:
+    """Tally writes user-defined fields as <UDF:NAME ...> without declaring the prefix, which XML parsers
+    reject ("unbound prefix"). Turn <UDF:NAME> into <UDF_NAME> (and the same for attributes)."""
+    if ":" not in tag:
+        return tag
+    tag = _PREFIXED_NAME.sub(lambda m: f"{m.group(1)}{m.group(2)}_", tag)
+    return _PREFIXED_ATTR.sub(lambda m: f"{m.group(1)}{m.group(2)}_{m.group(3)}{m.group(4)}", tag)
 
 
 def _clean_xml(raw: bytes) -> str:
@@ -33,7 +45,10 @@ def _clean_xml(raw: bytes) -> str:
         text = raw.decode("utf-8", errors="replace")
     text = _BAD_REF.sub("", text)
     text = _BAD_CHR.sub("", text)
-    return re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
+    text = re.sub(r"^\s*<\?xml[^>]*\?>", "", text)
+    if ":" in text:
+        text = _TAG.sub(lambda m: _strip_prefixes(m.group(0)), text)
+    return text
 
 
 def parse_xml(raw: bytes) -> ET.Element:
@@ -468,12 +483,19 @@ def fetch_months(client: TallyClient, company, company_gstin, months, masters=No
         b = date(y + (m == 12), 1 if m == 12 else m + 1, 1) - timedelta(days=1)
         say(f"Reading vouchers {a:%b-%Y} from Tally…", done / steps)
         raw = client.fetch_vouchers_raw(company, a, b)
+        raw_path = ""
         if cache_dir:
             os.makedirs(cache_dir, exist_ok=True)
-            with open(os.path.join(cache_dir, f"vouchers_{a:%Y%m}.xml"), "wb") as f:
+            raw_path = os.path.join(cache_dir, f"vouchers_{a:%Y%m}.xml")
+            with open(raw_path, "wb") as f:
                 f.write(raw)
         say(f"Processing {a:%b-%Y}…", (done + 0.5) / steps)
-        o, i = vouchers_to_docs([parse_xml(raw)], masters, company_gstin, a, b, progress)
+        try:
+            root = parse_xml(raw)
+        except TallyError as e:
+            raise TallyError(f"{e}\n\nTally's raw reply for {a:%b-%Y} is saved at:\n{raw_path or '(not saved)'}\n"
+                             f"Send that file to support so the reader can be fixed.")
+        o, i = vouchers_to_docs([root], masters, company_gstin, a, b, progress)
         say(f"  {a:%b-%Y}: {len(o):,} sales docs, {len(i):,} purchase docs")
         result[(y, m)] = (o, i)
         done += 1
@@ -509,3 +531,57 @@ def load_from_files(paths, company_gstin, d_from=None, d_to=None, progress=None)
         masters.load(root)
     say("Converting vouchers…", len(paths) / (len(paths) + 1))
     return vouchers_to_docs(with_vouchers, masters, company_gstin, d_from, d_to, progress)
+
+
+def diagnose(client: TallyClient, company, company_gstin, day, progress=None):
+    """Step-by-step connection test. Returns [(ok: bool|None, message)] (None = information)."""
+    say = progress or (lambda m, f=None: None)
+    out = []
+    say("Checking Tally connection…", 0.1)
+    try:
+        companies = client.list_companies()
+    except TallyError as e:
+        out.append((False, f"Cannot reach Tally at {client.url}. {e}"))
+        out.append((None, "Fix: open TallyPrime → F1 › Settings › Connectivity › Client/Server configuration → "
+                          "'TallyPrime acts as' = Both, Enable ODBC = Yes, Port = %d. Restart Tally." % client.port))
+        return out
+    out.append((True, f"Tally is answering on {client.url}."))
+    out.append((bool(companies), "Companies open in Tally: " + (", ".join(companies) or "none – open the company")))
+    if not company:
+        out.append((False, "No Tally company is set for this client – set it in Manage clients."))
+        return out
+    exact = company in companies
+    near = [c for c in companies if c.strip().lower() == company.strip().lower()]
+    if exact:
+        out.append((True, f"Company '{company}' is open."))
+    elif near:
+        out.append((False, f"Company name differs only in spelling/case: Tally has '{near[0]}'. Update it in "
+                           f"Manage clients."))
+        return out
+    else:
+        out.append((False, f"Company '{company}' is not open in Tally. Open it, or correct the name in "
+                           f"Manage clients."))
+        return out
+    say("Reading masters…", 0.4)
+    try:
+        masters = fetch_masters(client, company)
+        out.append((True, f"Masters read: {len(masters.ledgers):,} ledgers, {len(masters.groups):,} groups, "
+                          f"{len(masters.items):,} stock items."))
+    except TallyError as e:
+        out.append((False, f"Reading masters failed: {e}"))
+        return out
+    say(f"Reading vouchers of {day:%d-%b-%Y}…", 0.7)
+    try:
+        raw = client.fetch_vouchers_raw(company, day, day)
+        root = parse_xml(raw)
+        n = sum(1 for _ in root.iter("VOUCHER"))
+        o, i = vouchers_to_docs([root], masters, company_gstin, day, day)
+        out.append((True, f"Vouchers read for {day:%d-%b-%Y}: {n} sales/purchase/note vouchers "
+                          f"({len(o)} sales docs, {len(i)} purchase docs)."))
+    except TallyError as e:
+        out.append((False, f"Reading vouchers failed: {e}"))
+        return out
+    g = clean_gstin(company_gstin)
+    out.append((None, f"Everything needed for fetching works. Client GSTIN in the app: {g or '(none)'}."))
+    say("Connection test finished", 1.0)
+    return out

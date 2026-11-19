@@ -50,6 +50,26 @@ STATUS_STYLE = {   # status -> (row background, accent / text colour)
     reco.PORTAL_ONLY: (C["lavender_soft"], C["purple"]),
 }
 FONT = "Segoe UI"
+UI_SCALE = 1.0          # set from the screen's DPI when the window opens (1.25 / 1.5 on scaled displays)
+
+
+def px(n):
+    """Scale a pixel size for high-DPI displays."""
+    return int(round(n * UI_SCALE))
+
+
+def enable_dpi_awareness():
+    """Tell Windows we draw at the real screen resolution, so it doesn't stretch (blur) the window."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)     # per-monitor-aware where available
+        except Exception:  # noqa: BLE001
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def resource(*parts):
@@ -90,7 +110,7 @@ class Kpi(tk.Frame):
         super().__init__(parent, bg=C["card"], highlightthickness=1, highlightbackground=C["border"],
                          cursor="hand2" if command else "")
         self.accent, self.soft, self.active = accent, soft or C["card"], False
-        self.bar = tk.Frame(self, bg=accent, width=5)
+        self.bar = tk.Frame(self, bg=accent, width=px(5))
         self.bar.pack(side="left", fill="y")
         body = tk.Frame(self, bg=C["card"], padx=12, pady=3 if compact else 8)
         body.pack(side="left", fill="both", expand=True)
@@ -130,7 +150,7 @@ class Kpi(tk.Frame):
 class NavItem(tk.Frame):
     def __init__(self, parent, number, text, command):
         super().__init__(parent, bg=C["card"], cursor="hand2")
-        self.ind = tk.Frame(self, bg=C["card"], width=4)
+        self.ind = tk.Frame(self, bg=C["card"], width=px(4))
         self.ind.pack(side="left", fill="y")
         self.num = tk.Label(self, text=number, bg=C["lavender_soft"], fg=C["maroon"], width=3,
                             font=(FONT, 9, "bold"))
@@ -174,7 +194,7 @@ def make_tree(parent, cols, widths, height=14, sort=True):
             tv.heading(c_, text=c_)
         num = any(k in c_.lower() for k in ("taxable", "igst", "cgst", "sgst", "cess", "tax", "total",
                                              "diff", "value", "docs", "count"))
-        tv.column(c_, width=w, anchor="e" if num else "w", stretch=False)
+        tv.column(c_, width=px(w), anchor="e" if num else "w", stretch=False)
     ys = ttk.Scrollbar(frame, orient="vertical", command=tv.yview)
     xs = ttk.Scrollbar(frame, orient="horizontal", command=tv.xview)
     tv.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)
@@ -212,13 +232,19 @@ class App(tk.Tk):
              ("sales", "4", "Sales & GSTR-1"), ("3b", "5", "GSTR-3B"), ("settings", "⚙", "Settings")]
 
     def __init__(self, selfcheck=False):
+        global UI_SCALE
+        enable_dpi_awareness()
         super().__init__()
+        try:
+            UI_SCALE = max(1.0, min(3.0, self.winfo_fpixels("1i") / 96.0))
+        except tk.TclError:
+            UI_SCALE = 1.0
         self.selfcheck = selfcheck
         self.title(f"{APP_NAME} {__version__}")
         self.configure(bg=C["bg"])
-        self.geometry("1360x860")
-        self.minsize(1100, 680)
-        self.compact = self.winfo_screenheight() < 900     # e.g. 1366x768 laptops
+        self.geometry(f"{px(1360)}x{px(860)}")
+        self.minsize(px(1100), px(640))
+        self.compact = self.winfo_screenheight() / UI_SCALE < 900     # e.g. 1366x768 laptops, 1080p at 150%
         self.s = config.load()
         self.ui_q = queue.Queue()
         self.portal = None
@@ -285,7 +311,7 @@ class App(tk.Tk):
 
         def btn(name, bg, fg, hover, press, border=None, bold=False, pad=(14, 7)):
             st.configure(name, background=bg, foreground=fg, bordercolor=border or bg, lightcolor=bg,
-                         darkcolor=bg, focuscolor=bg, padding=pad, relief="flat",
+                         darkcolor=bg, focuscolor=bg, padding=(px(pad[0]), px(pad[1])), relief="flat",
                          font=(FONT, 10, "bold") if bold else (FONT, 10))
             st.map(name, background=[("disabled", "#E9E1E5"), ("pressed", press), ("active", hover)],
                    foreground=[("disabled", "#A99AA2")],
@@ -300,20 +326,20 @@ class App(tk.Tk):
 
         st.configure("TCombobox", fieldbackground=C["card"], background=C["card"], foreground=C["text"],
                      arrowcolor=C["maroon"], bordercolor=C["border"], lightcolor=C["card"], darkcolor=C["card"],
-                     padding=(6, 4), selectbackground=C["card"], selectforeground=C["text"])
+                     padding=(px(6), px(4)), selectbackground=C["card"], selectforeground=C["text"])
         st.map("TCombobox", fieldbackground=[("readonly", C["card"])], selectbackground=[("readonly", C["card"])],
                selectforeground=[("readonly", C["text"])], bordercolor=[("focus", C["maroon"])])
         st.configure("TEntry", fieldbackground=C["card"], bordercolor=C["border"], lightcolor=C["card"],
-                     darkcolor=C["card"], padding=(6, 4))
+                     darkcolor=C["card"], padding=(px(6), px(4)))
         st.map("TEntry", bordercolor=[("focus", C["maroon"])])
         st.configure("Brand.Horizontal.TProgressbar", troughcolor=C["blush"], background=C["maroon"],
                      bordercolor=C["blush"], lightcolor=C["maroon_light"], darkcolor=C["maroon"])
         st.configure("Treeview", background=C["card"], fieldbackground=C["card"], foreground=C["text"],
-                     rowheight=26, bordercolor=C["border"], lightcolor=C["card"], darkcolor=C["card"],
+                     rowheight=px(26), bordercolor=C["border"], lightcolor=C["card"], darkcolor=C["card"],
                      font=(FONT, 9))
         st.map("Treeview", background=[("selected", C["lavender"])], foreground=[("selected", C["text"])])
         st.configure("Treeview.Heading", background=C["maroon"], foreground="white", relief="flat",
-                     font=(FONT, 9, "bold"), padding=(6, 6), bordercolor=C["maroon_dark"],
+                     font=(FONT, 9, "bold"), padding=(px(6), px(6)), bordercolor=C["maroon_dark"],
                      lightcolor=C["maroon"], darkcolor=C["maroon"])
         st.map("Treeview.Heading", background=[("active", C["maroon_light"])])
         for o in ("Vertical", "Horizontal"):
@@ -321,8 +347,10 @@ class App(tk.Tk):
                          arrowcolor=C["maroon"], lightcolor=C["border"], darkcolor=C["border"])
 
     def _load_images(self):
-        for key, name in (("icon", "app.png"), ("icon32", "icon32.png"), ("mark", "header_mark.png"),
-                          ("logo", "logo_180.png")):
+        steps = [100, 125, 150, 175, 200, 250, 300]
+        pct = min(steps, key=lambda v: abs(v - UI_SCALE * 100))      # sharp image made for this scaling
+        for key, name in (("icon", "app.png"), ("icon32", "icon32.png"), ("mark", f"header_mark@{pct}.png"),
+                          ("logo", f"logo@{pct}.png")):
             try:
                 self._images[key] = tk.PhotoImage(file=resource("assets", name))
             except tk.TclError:
@@ -333,10 +361,10 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------ header
     def _header(self):
-        h = tk.Frame(self, bg=C["maroon"], height=64 if self.compact else 72)
+        h = tk.Frame(self, bg=C["maroon"], height=px(64 if self.compact else 72))
         h.pack(fill="x")
         h.pack_propagate(False)
-        tk.Frame(self, bg=C["yellow"], height=3).pack(fill="x")
+        tk.Frame(self, bg=C["yellow"], height=px(3)).pack(fill="x")
         left = tk.Frame(h, bg=C["maroon"])
         left.pack(side="left", padx=(16, 0))
         if self._images.get("mark"):
@@ -422,7 +450,7 @@ class App(tk.Tk):
     def _body(self):
         body = tk.Frame(self, bg=C["bg"])
         body.pack(fill="both", expand=True)
-        side = tk.Frame(body, bg=C["card"], width=214)
+        side = tk.Frame(body, bg=C["card"], width=px(214))
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         tk.Frame(body, bg=C["border"], width=1).pack(side="left", fill="y")
@@ -490,7 +518,7 @@ class App(tk.Tk):
         sb = tk.Frame(self, bg=C["card"], padx=16, pady=6)
         sb.pack(side="bottom", fill="x")
         tk.Frame(self, bg=C["border"], height=1).pack(side="bottom", fill="x")
-        self.pb = ttk.Progressbar(sb, style="Brand.Horizontal.TProgressbar", length=280, mode="determinate",
+        self.pb = ttk.Progressbar(sb, style="Brand.Horizontal.TProgressbar", length=px(280), mode="determinate",
                                   maximum=100)
         self.pb.pack(side="left")
         self.lbl_pct = tk.Label(sb, text="", bg=C["card"], fg=C["maroon"], font=(FONT, 9, "bold"), width=5)
@@ -861,14 +889,13 @@ class App(tk.Tk):
         ttk.Button(tb, text="⟳  Fetch from Tally", style="Primary.TButton", command=self.refresh).pack(side="left")
         ttk.Button(tb, text="Load Tally XML files…", command=self.load_tally_files).pack(side="left", padx=8)
         ttk.Button(tb, text="⬇  Export to Excel", command=self.export_books).pack(side="left")
-        tk.Label(tb, text="Show", bg=C["card"], fg=C["muted"]).pack(side="left", padx=(20, 6))
+        ttk.Button(tb, text="✔  Test Tally connection", command=self.test_tally).pack(side="left", padx=8)
+        tk.Label(tb, text="Show", bg=C["card"], fg=C["muted"]).pack(side="left", padx=(12, 6))
         self.v_bfilter = tk.StringVar(value="All")
         cb = ttk.Combobox(tb, textvariable=self.v_bfilter, state="readonly", width=16,
                           values=["All", "Sales", "Purchases", "With warnings"])
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda e: self._fill_books())
-        tk.Label(tb, text="TallyPrime: F1 › Settings › Connectivity › port 9000, company open",
-                 bg=C["card"], fg=C["muted"], font=(FONT, 8)).pack(side="right")
 
         row = tk.Frame(page, bg=C["bg"])
         row.pack(fill="x", pady=(0, 12))
@@ -886,6 +913,15 @@ class App(tk.Tk):
         f, self.tv_books = make_tree(page, cols, [50, 45, 85, 90, 120, 210, 140, 40, 100, 85, 85, 85, 60, 100,
                                                   70, 420])
         f.pack(fill="both", expand=True)
+
+    def test_tally(self):
+        if not self.client:
+            return self.info("Choose a client first.")
+        c = tally.TallyClient(self.s["tally_host"], self.s["tally_port"], timeout=60)
+        company, g = self.client.get("tally_company", ""), self.gstin()
+        day = date(*self.periods()[0], 1)
+        self.run_bg("Testing Tally connection", lambda p: tally.diagnose(c, company, g, day, p),
+                    lambda res: CheckDialog(self, "Tally connection test", res))
 
     def load_tally_files(self):
         if not self.need_client():
@@ -981,7 +1017,7 @@ class App(tk.Tk):
         tk.Label(c2, text="Files you already have", bg=C["card"], fg=C["maroon"], font=(FONT, 12, "bold")).pack(
             anchor="w")
         tk.Label(c2, text="They are copied into this client's folder and remembered next time.", bg=C["card"],
-                 fg=C["muted"], font=(FONT, 9), wraplength=380, justify="left").pack(anchor="w", pady=(0, 10))
+                 fg=C["muted"], font=(FONT, 9), wraplength=px(380), justify="left").pack(anchor="w", pady=(0, 10))
         ttk.Button(c2, text="Add GSTR-2B / GSTR-1 files…", command=self.add_portal_files).pack(anchor="w")
         ttk.Button(c2, text="Open portal files folder", style="Link.TButton",
                    command=lambda: self.client and self._opened(config.portal_files_dir(self.s, self.client))
@@ -995,7 +1031,7 @@ class App(tk.Tk):
         tip = ("If the portal layout changes and an automatic click fails, the status bar tells you which button to "
                "click yourself – the downloaded file is still captured. Uploading GSTR-1 only fills the draft; "
                "review it on the portal and file with DSC/EVC yourself.")
-        tk.Label(page, text=tip, bg=C["bg"], fg=C["muted"], font=(FONT, 8), wraplength=1000, justify="left").pack(
+        tk.Label(page, text=tip, bg=C["bg"], fg=C["muted"], font=(FONT, 8), wraplength=px(1000), justify="left").pack(
             anchor="w", pady=(8, 0))
 
     # ---------- portal files (parse on a worker thread, apply on the UI thread)
@@ -1607,7 +1643,7 @@ class Dialog(tk.Toplevel):
         head = tk.Frame(self, bg=C["maroon"], padx=18, pady=10)
         head.pack(fill="x")
         tk.Label(head, text=title, bg=C["maroon"], fg="white", font=(FONT, 13, "bold")).pack(anchor="w")
-        tk.Frame(self, bg=C["yellow"], height=3).pack(fill="x")
+        tk.Frame(self, bg=C["yellow"], height=px(3)).pack(fill="x")
         self.body = tk.Frame(self, bg=C["bg"], padx=18, pady=14)
         self.body.pack(fill="both", expand=True)
 
@@ -1774,6 +1810,26 @@ class ClientsDialog(Dialog):
         messagebox.showinfo("Tally", "Companies open in Tally:\n\n" + ("\n".join(names) or "none"), parent=self)
 
 
+class CheckDialog(Dialog):
+    def __init__(self, app, title, results):
+        super().__init__(app, title)
+        o, c_ = card(self.body, 16, 12)
+        o.pack(fill="both")
+        for ok, msg in results:
+            sym, col = ("✔", C["green"]) if ok else (("✖", C["red"]) if ok is False else ("ℹ", C["purple"]))
+            row = tk.Frame(c_, bg=C["card"])
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text=sym, bg=C["card"], fg=col, font=(FONT, 12, "bold"), width=2).pack(side="left",
+                                                                                              anchor="n")
+            tk.Label(row, text=msg, bg=C["card"], fg=C["text"], font=(FONT, 10), wraplength=px(620),
+                     justify="left", anchor="w").pack(side="left", fill="x")
+        for ok, msg in results:
+            app.log(("OK   " if ok else "FAIL " if ok is False else "INFO ") + msg)
+        ttk.Button(self.body, text="Close", style="Primary.TButton", command=self.destroy).pack(anchor="e",
+                                                                                               pady=(12, 0))
+        self.center()
+
+
 class DetailDialog(Dialog):
     FIELDS = [("Document", "doc_type"), ("Invoice no.", "inv_no"), ("Date", "inv_date"), ("Party", "party"),
               ("GSTIN", "gstin"), ("Place of supply", "pos"), ("Taxable", "taxable"), ("IGST", "igst"),
@@ -1784,7 +1840,7 @@ class DetailDialog(Dialog):
         super().__init__(app, row.status)
         bg, fg = STATUS_STYLE.get(row.status, (C["card"], C["text"]))
         tk.Label(self.body, text=row.remarks or "No remarks.", bg=bg, fg=fg, font=(FONT, 10, "bold"),
-                 wraplength=620, justify="left", padx=10, pady=8, anchor="w").pack(fill="x", pady=(0, 10))
+                 wraplength=px(620), justify="left", padx=10, pady=8, anchor="w").pack(fill="x", pady=(0, 10))
         o, g = card(self.body, 0, 0)
         o.pack(fill="both")
         for c_, h in enumerate(["", "Books (Tally)", "Portal", "Difference"]):
@@ -1830,7 +1886,7 @@ class UpdateDialog(Dialog):
         notes.insert("1.0", m.get("notes") or "Bug fixes and improvements.")
         notes.configure(state="disabled")
         notes.pack(fill="both", pady=10)
-        self.pb = ttk.Progressbar(self.body, style="Brand.Horizontal.TProgressbar", length=480, mode="determinate")
+        self.pb = ttk.Progressbar(self.body, style="Brand.Horizontal.TProgressbar", length=px(480), mode="determinate")
         self.pb.pack(fill="x")
         self.lbl = tk.Label(self.body, text="Your clients, settings and reports are kept. The app will close and "
                                             "reopen.", bg=C["bg"], fg=C["muted"])
@@ -1948,6 +2004,10 @@ def run_selfcheck(shot_dir):
         app.run_3b()
         assert app.rows3b, "3B produced no rows"
         shot("5-gstr3b")
+        from gstreco import tally as _t
+        res = _t.diagnose(_t.TallyClient("127.0.0.1", 9, timeout=3), "X", make_sample.COMPANY, date(2026, 10, 1))
+        assert res and res[0][0] is False, "connection test must report a missing Tally"
+        CheckDialog(app, "Tally connection test", res).destroy()
         app.show_page("settings")
         pump(0.3)
         dlg = app.manage_clients()
