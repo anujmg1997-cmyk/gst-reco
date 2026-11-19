@@ -21,7 +21,7 @@ import tkinter as tk  # noqa: E402
 from tkinter import filedialog, messagebox, ttk  # noqa: E402
 
 from gstreco import UPDATE_URL, __version__, config, gstr1_builder, gstr3b, portal_data  # noqa: E402
-from gstreco import reco, report, tally, updater  # noqa: E402
+from gstreco import reco, report, secret, tally, updater  # noqa: E402
 from gstreco.normalize import (fmt_date, fp, is_valid_gstin, months_between,  # noqa: E402
                                parse_period_label, period_bounds, period_label)
 from gstreco.portal import PortalWorker  # noqa: E402
@@ -1149,7 +1149,8 @@ class App(tk.Tk):
         cid, name = self.client["id"], self.client["name"]
         worker = PortalWorker(dl, config.profile_dir(self.client), self.s.get("browser", "msedge"), log=self.log,
                               on_download=lambda p: self.on_ui(lambda: self._on_download(p, cid)),
-                              selectors_override=config.selectors_override())
+                              selectors_override=config.selectors_override(),
+                              credentials=lambda: self._portal_credentials(cid))
         self.portal, self.portal_client = worker, cid
         worker.start()
         self.lbl_portal.configure(text="Starting browser…")
@@ -1173,6 +1174,19 @@ class App(tk.Tk):
                     text=f"Browser running for {name}. Downloads are saved in the client's Portal files folder."),
                     then(worker)))
         threading.Thread(target=wait, daemon=True).start()
+
+    def _portal_credentials(self, cid):
+        """Called by the browser thread only when the login page is open. Never logged."""
+        c = next((x for x in self.s["clients"] if x["id"] == cid), None)
+        if not c or not c.get("portal_user"):
+            return None
+        pwd = ""
+        if c.get("portal_pass"):
+            try:
+                pwd = secret.unprotect(c["portal_pass"])
+            except secret.SecretError as e:
+                self.log(str(e))
+        return c["portal_user"], pwd
 
     def _on_download(self, path, cid):
         if self.client and self.client["id"] == cid:
@@ -1691,8 +1705,30 @@ class ClientsDialog(Dialog):
         self.cb_comp.grid(row=3, column=1, sticky="w")
         ttk.Button(form, text="⟳  List companies open in Tally", style="Link.TButton",
                    command=self._list_companies).grid(row=4, column=1, sticky="w")
+        tk.Frame(form, bg=C["border"], height=1).grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 6))
+        tk.Label(form, text="GST portal login (optional)", bg=C["card"], fg=C["maroon"],
+                 font=(FONT, 10, "bold")).grid(row=6, column=0, columnspan=2, sticky="w")
+        self.v_puser, self.v_ppass = tk.StringVar(), tk.StringVar()
+        self.v_remember, self.v_show = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+        tk.Label(form, text="Portal username", bg=C["card"]).grid(row=7, column=0, sticky="w", pady=5)
+        ttk.Entry(form, textvariable=self.v_puser, width=34).grid(row=7, column=1, sticky="w")
+        tk.Label(form, text="Portal password", bg=C["card"]).grid(row=8, column=0, sticky="w", pady=5)
+        pf = tk.Frame(form, bg=C["card"])
+        pf.grid(row=8, column=1, sticky="w")
+        self.e_pass = ttk.Entry(pf, textvariable=self.v_ppass, width=24, show="•")
+        self.e_pass.pack(side="left")
+        tk.Checkbutton(pf, text="show", variable=self.v_show, bg=C["card"], activebackground=C["card"],
+                       command=lambda: self.e_pass.configure(show="" if self.v_show.get() else "•")).pack(
+            side="left", padx=6)
+        self.lbl_saved = tk.Label(form, text="", bg=C["card"], fg=C["muted"], font=(FONT, 8))
+        self.lbl_saved.grid(row=9, column=1, sticky="w")
+        tk.Checkbutton(form, text="Remember the password on this PC (encrypted for your Windows user)",
+                       variable=self.v_remember, bg=C["card"], activebackground=C["card"],
+                       font=(FONT, 9)).grid(row=10, column=0, columnspan=2, sticky="w")
+        tk.Label(form, text="The app fills these in on the login page. You still type the CAPTCHA and OTP.",
+                 bg=C["card"], fg=C["muted"], font=(FONT, 8)).grid(row=11, column=0, columnspan=2, sticky="w")
         btns = tk.Frame(form, bg=C["card"])
-        btns.grid(row=5, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        btns.grid(row=12, column=0, columnspan=2, sticky="w", pady=(14, 0))
         ttk.Button(btns, text="Save", style="Primary.TButton", command=self._save).pack(side="left")
         ttk.Button(btns, text="+  New", command=self._new).pack(side="left", padx=6)
         ttk.Button(btns, text="Remove", command=self._delete).pack(side="left")
@@ -1734,8 +1770,10 @@ class ClientsDialog(Dialog):
         if sel:
             self.tv.selection_remove(*sel)
         self.lbl_mode.configure(text="New client")
-        for v in (self.v_name, self.v_gstin, self.v_comp):
+        for v in (self.v_name, self.v_gstin, self.v_comp, self.v_puser, self.v_ppass):
             v.set("")
+        self.v_remember.set(True)
+        self.lbl_saved.configure(text="")
 
     def _load_selected(self):
         sel = self.tv.selection()
@@ -1750,6 +1788,11 @@ class ClientsDialog(Dialog):
             self.v_name.set(c["name"])
             self.v_gstin.set(c.get("gstin", ""))
             self.v_comp.set(c.get("tally_company", ""))
+            self.v_puser.set(c.get("portal_user", ""))
+            self.v_ppass.set("")
+            has = bool(c.get("portal_pass"))
+            self.v_remember.set(has or not c.get("portal_user"))
+            self.lbl_saved.configure(text="A password is saved – leave blank to keep it." if has else "")
 
     def _save(self):
         name, g, comp = self.v_name.get().strip(), self.v_gstin.get().strip().upper(), self.v_comp.get().strip()
@@ -1766,6 +1809,18 @@ class ClientsDialog(Dialog):
             c = config.new_client(name, g, comp)
             self.s["clients"].append(c)
             self.editing = c["id"]
+        c["portal_user"] = self.v_puser.get().strip()
+        pwd = self.v_ppass.get()
+        if not self.v_remember.get() or not c["portal_user"]:
+            c.pop("portal_pass", None)
+        elif pwd:
+            try:
+                c["portal_pass"] = secret.protect(pwd)
+            except secret.SecretError as e:
+                c.pop("portal_pass", None)
+                messagebox.showwarning("Clients", f"{e} The username is saved; type the password at login.",
+                                       parent=self)
+        self.v_ppass.set("")
         first = not self.app.client
         self.app.clients_changed(select_id=c["id"] if first else None)
         self._fill(select=c["id"])
@@ -2004,6 +2059,8 @@ def run_selfcheck(shot_dir):
         app.run_3b()
         assert app.rows3b, "3B produced no rows"
         shot("5-gstr3b")
+        if secret.available():          # real Windows password encryption round-trip
+            assert secret.unprotect(secret.protect("pässwörd-123")) == "pässwörd-123", "DPAPI round-trip failed"
         from gstreco import tally as _t
         res = _t.diagnose(_t.TallyClient("127.0.0.1", 9, timeout=3), "X", make_sample.COMPANY, date(2026, 10, 1))
         assert res and res[0][0] is False, "connection test must report a missing Tally"

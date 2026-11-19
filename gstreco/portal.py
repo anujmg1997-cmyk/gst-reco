@@ -34,8 +34,9 @@ def load_selectors(override_path=None):
 
 class PortalWorker(threading.Thread):
     def __init__(self, download_dir, profile_dir, channel="msedge", log=print, on_download=None,
-                 selectors_override=None):
+                 selectors_override=None, credentials=None):
         super().__init__(daemon=True)
+        self.credentials = credentials      # callable -> (username, password) or None; read only when needed
         self.download_dir, self.profile_dir, self.channel = download_dir, profile_dir, channel
         self.log, self.on_download = log, on_download
         self.sel = load_selectors(selectors_override)
@@ -97,7 +98,9 @@ class PortalWorker(threading.Thread):
         errors = []
         for ch in dict.fromkeys([self.channel, "msedge", "chrome", None]):
             try:
-                kw = dict(headless=False, accept_downloads=True, no_viewport=True,
+                # chromium_sandbox=True: keep the browser's normal security sandbox on
+                # (removes the "--no-sandbox ... security risks" warning bar)
+                kw = dict(headless=False, accept_downloads=True, no_viewport=True, chromium_sandbox=True,
                           args=["--start-maximized"])
                 if ch:
                     kw["channel"] = ch
@@ -190,8 +193,40 @@ class PortalWorker(threading.Thread):
         page = self._active_page()
         page.bring_to_front()
         page.goto(self.sel["login_url"], wait_until="domcontentloaded")
-        self.log("Portal opened. Log in yourself (username, password, CAPTCHA, OTP).")
+        user, pwd = (self.credentials() if self.credentials else None) or ("", "")
+        if user and self._fill("login_username", user):
+            filled_pwd = bool(pwd) and self._fill("login_password", pwd)
+            self._focus("login_captcha")
+            if filled_pwd:
+                self.log("Username and password filled in. Type the CAPTCHA, click LOGIN, then enter the OTP.")
+            else:
+                self.log("Username filled in. Type your password and the CAPTCHA, click LOGIN, then the OTP.")
+        else:
+            self.log("Portal opened. Log in yourself (username, password, CAPTCHA, OTP). Tip: save the portal "
+                     "username/password in Manage clients to have them filled in.")
         return True
+
+    def _fill(self, key, value):
+        page = self._active_page()
+        for sel in self.sel.get(key, []):
+            try:
+                loc = page.locator(sel).first
+                loc.wait_for(state="visible", timeout=8000)
+                loc.fill(value)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    def _focus(self, key):
+        page = self._active_page()
+        for sel in self.sel.get(key, []):
+            try:
+                page.locator(sel).first.focus(timeout=2000)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
 
     def _wait_login(self, timeout_s=600):
         end = time.time() + timeout_s
@@ -210,11 +245,69 @@ class PortalWorker(threading.Thread):
             self._open_login()
             self._wait_login()
 
+    def _on_dashboard(self, page):
+        return any(m in page.url for m in self.sel["dashboard_url_contains"]) and not self._denied(page)
+
+    def _denied(self, page):
+        try:
+            return page.locator("text=Access Denied").first.is_visible(timeout=500)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _open_returns_dashboard(self):
+        """Reach the Returns Dashboard through the portal's own menu (opening its address directly is
+        refused by the portal with 'Access Denied')."""
+        page = self._active_page()
+        if self._on_dashboard(page):
+            return page
+        if self._denied(page) or not any(m in page.url for m in self.sel["logged_in_url_contains"]):
+            page.goto(self.sel["welcome_url"], wait_until="domcontentloaded")
+            page.wait_for_timeout(2500)
+            if self._denied(page) or "/services/login" in page.url:
+                raise PortalError("The GST portal says the session has expired. Click 'Open portal & log in' "
+                                  "and log in again.")
+        # 1) a 'Return Dashboard' button/link on the welcome page, 2) Services > Returns > Returns Dashboard
+        if not self._click("return_dashboard_link", 4000):
+            self._hover_or_click("services_menu")
+            self._hover_or_click("returns_menu")
+            self._click("returns_dashboard_menu", 5000)
+        end = time.time() + 20
+        while time.time() < end:
+            page = self._active_page()
+            if self._on_dashboard(page):
+                page.wait_for_timeout(1500)
+                return page
+            self._pump(500)
+        self.log("Please open Services › Returns › Returns Dashboard in the browser yourself – the app will "
+                 "continue as soon as the dashboard is open (waiting up to 3 minutes).")
+        end = time.time() + 180
+        while time.time() < end:
+            for p in self.ctx.pages:
+                if not p.is_closed() and self._on_dashboard(p):
+                    self.page = p
+                    p.wait_for_timeout(1500)
+                    return p
+            self._pump(1000)
+        raise PortalError("The Returns Dashboard was not opened.")
+
+    def _hover_or_click(self, key):
+        page = self._active_page()
+        for sel in self.sel.get(key, []):
+            try:
+                loc = page.locator(sel).first
+                loc.wait_for(state="visible", timeout=3000)
+                loc.hover()
+                page.wait_for_timeout(400)
+                loc.click()
+                page.wait_for_timeout(600)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
     def _dashboard(self, y, m):
         self._ensure_login()
-        page = self._active_page()
-        page.goto(self.sel["dashboard_url"], wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
+        page = self._open_returns_dashboard()
         q = ((m - 4) % 12) // 3 + 1
         ok = self._select("fy_select", re.escape(fy_label(y, m)))
         self._select("quarter_select", rf"Quarter\s*{q}\b")
